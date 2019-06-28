@@ -10,9 +10,9 @@ https://aiopenscale-custom-deployement-spec.mybluemix.net/
 """
 from flask import Flask
 from ibm_watson import AssistantV2
-from typing import Dict, List
 
 import os
+import configparser
 import flask
 import numpy as np
 import requests
@@ -20,20 +20,18 @@ import json
 
 
 app = Flask(__name__, static_url_path='')
-"""The Flask application
-"""
+
+config = configparser.ConfigParser()
+config.read('config.ini')
+
 assistant = AssistantV2(
-    iam_apikey = '# replace with API key', 
+    iam_apikey = config['ASSISTANT']['APIKEY'], 
     version = '2019-02-28')
 assistant.set_http_config({'timeout': 100})
-"""The IBM Watson Assistant client
-"""
 
 assistant_id = 'ef7829c6-3fb8-4885-9a26-0485c29c0b0f'
-"""The id of the assistant to send messages to
-"""
 
-def convert_output(output_data: List) -> Dict:
+def convert_output(output_data):
     """convert_output
     Args:
         output_data (List): The list of responses from Watson Assistant
@@ -41,7 +39,6 @@ def convert_output(output_data: List) -> Dict:
     Returns:
         A dict in the format expected by Watson OpenScale
     """
-
     values = []
     labels = [
         'Cancel', 
@@ -67,7 +64,7 @@ def convert_output(output_data: List) -> Dict:
 
     return {'fields': openscale_fields, 'labels': labels, 'values': openscale_values}
 
-def convert_input(input_data: Dict) -> List:
+def convert_input(input_data):
     """convert_input
     Args:
         input_data (dict): The incoming scoring request from Watson OpenScale
@@ -75,13 +72,11 @@ def convert_input(input_data: Dict) -> List:
     Returns:
         A List of values
     """
-
     openscale_values = input_data['values']
     return openscale_values
 
 @app.route('/v1/deployments/assistant/message', methods=['POST'])
 def send_message():
-    
     if flask.request.method == "POST":
         payload = flask.request.get_json()
 
@@ -114,7 +109,6 @@ def send_message():
             session_id = session_id
         )
     return flask.jsonify(openscale_output)
-
 
 @app.route('/v1/deployments', methods=['GET'])
 def get_deployments():
