@@ -26,7 +26,7 @@ config.read('config.ini')
 assistant = AssistantV2(
     iam_apikey = config['ASSISTANT']['APIKEY'], 
     version = config['ASSISTANT']['VERSION'])
-assistant.set_http_config({'timeout': config['ASSISTANT']['TIMEOUT']})
+assistant.set_http_config({'timeout': int(config['ASSISTANT']['TIMEOUT'])})
 
 assistant_id = config['ASSISTANT']['ASSISTANT_ID']
 
