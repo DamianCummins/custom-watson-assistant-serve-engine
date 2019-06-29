@@ -10,14 +10,13 @@ https://aiopenscale-custom-deployement-spec.mybluemix.net/
 """
 from flask import Flask
 from ibm_watson import AssistantV2
+from queue import Queue
+from time import time
+from assistant_worker import AssistantWorker
 
 import os
 import configparser
 import flask
-import numpy as np
-import requests
-import json
-
 
 app = Flask(__name__, static_url_path='')
 
@@ -31,87 +30,81 @@ assistant.set_http_config({'timeout': 100})
 
 assistant_id = 'ef7829c6-3fb8-4885-9a26-0485c29c0b0f'
 
-def convert_output(output_data):
-    """convert_output
-    Args:
-        output_data (List): The list of responses from Watson Assistant
-    
-    Returns:
-        A dict in the format expected by Watson OpenScale
-    """
-    values = []
-    labels = [
-        'Cancel', 
-        'Customer_Care_Appointments',
-        'Customer_Care_Store_Hours',
-        'Customer_Care_Store_Location',
-        'General_Connect_to_Agent',
-        'General_Greetings',
-        'Goodbye',
-        'Help',
-        'Thanks'
-    ]
-
-    for response in output_data:
-        probabilities = np.zeros(len(labels))
-        intents = response['output']['intents']
-        for intent in intents:
-            probabilities[labels.index(intent['intent'])] = intent['confidence']
-        values.append([intent['intent'], probabilities.tolist()])
-
-    openscale_fields = ['intent', 'probabilities']
-    openscale_values = values
-
-    return {'fields': openscale_fields, 'labels': labels, 'values': openscale_values}
-
-def convert_input(input_data):
-    """convert_input
-    Args:
-        input_data (dict): The incoming scoring request from Watson OpenScale
-    
-    Returns:
-        A List of values
-    """
-    openscale_values = input_data['values']
-    return openscale_values
-
 @app.route('/v1/deployments/assistant/message', methods=['POST'])
 def send_message():
+    """send_message
+
+    Watson OpenScale will invoke this API to score the underlying model.
+    The implementation needs to be able to handle a payload with a large number
+    of values. For instance, during an explanation job, Watson OpenScale will 
+    send a request containing ~5000 perturbed values.
+
+    Method:
+        POST
+
+    Body:
+        a JSON object in the format of a Watson OpenScale scoring payload
+
+    Response:
+        a JSON object in the format of a Watson OpenScale scoring response
+
+    """
+    ts = time()
     if flask.request.method == "POST":
         payload = flask.request.get_json()
 
-        response = []
-        openscale_output = {}
-        print(payload)
+        openscale_output = {
+            'fields': [],
+            'labels': [],
+            'values': []
+        }
 
-        # Create session.
-        session_id = assistant.create_session(
-            assistant_id = assistant_id
-        ).get_result()['session_id']
+        queue = Queue()
+        # Create 50 AssistantWorker threads
+        for x in range(50):
+            worker = AssistantWorker(queue, assistant, assistant_id)
+            # Setting daemon to True will let the main thread exit even though the workers are blocking
+            worker.daemon = True
+            worker.start()
+        
+        # Split up incoming messages into chunks of 100
+        message_chunks = _chunks(payload['values'], 100)
+        results = [[] for chunk in message_chunks]
 
-        assistant.message(
-            assistant_id,
-            session_id
-        )
-        if payload is not None:
-            messages = convert_input(payload)
-            for message in messages:
-                response.append(assistant.message(
-                    assistant_id,
-                    session_id,
-                    input = { 'text': message[0] }
-                ).get_result())
-            openscale_output = convert_output(response)
+        counter = 0
+        # Put the tasks into the queue as a tuple
+        for chunk in message_chunks:
+            queue.put((counter, chunk, results))
+            counter += 1
 
-        # We're done, so we delete the session.
-        assistant.delete_session(
-            assistant_id = assistant_id,
-            session_id = session_id
-        )
+        # Causes the main thread to wait for the queue to finish processing all the tasks
+        queue.join()
+        print('Took %s', time() - ts)
+        
+        # Structure the response with the values in order
+        for result in results:
+            openscale_output['fields'] = result['fields']
+            openscale_output['labels'] = result['labels']
+            openscale_output['values'].extend(result['values'])
+
     return flask.jsonify(openscale_output)
 
 @app.route('/v1/deployments', methods=['GET'])
 def get_deployments():
+    """get_deployments
+
+    Watson OpenScale will invoke this API to discover and subscribe to the Watson Assistant deployment.
+    The properties defined in the response will be used to correctly configure the subscription.
+
+    Watson Assistant is defined as a multiclass problem type with unstructured text as an input.
+
+    Method:
+        GET
+
+    Response:
+        a JSON object in the format of a Watson OpenScale discover response
+
+    """
     response = {}
 
     if flask.request.method == 'GET':
@@ -142,6 +135,9 @@ def get_deployments():
             ]
         }
         return flask.jsonify(response)
+
+def _chunks(l, n):
+    return [l[i:i + n] for i in range(0, len(l), n)]
 
 if __name__ == '__main__':
     port = os.getenv('PORT', '5000')

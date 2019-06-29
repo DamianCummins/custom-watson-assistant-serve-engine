@@ -1,1 +1,1 @@
-web: gunicorn wsgi:app --graceful-timeout 100 --timeout 120
+web: gunicorn wsgi:app --graceful-timeout 240 --timeout 260
