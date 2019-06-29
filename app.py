@@ -25,10 +25,10 @@ config.read('config.ini')
 
 assistant = AssistantV2(
     iam_apikey = config['ASSISTANT']['APIKEY'], 
-    version = '2019-02-28')
-assistant.set_http_config({'timeout': 100})
+    version = config['ASSISTANT']['VERSION'])
+assistant.set_http_config({'timeout': config['ASSISTANT']['TIMEOUT']})
 
-assistant_id = 'ef7829c6-3fb8-4885-9a26-0485c29c0b0f'
+assistant_id = config['ASSISTANT']['ASSISTANT_ID']
 
 @app.route('/v1/deployments/assistant/message', methods=['POST'])
 def send_message():
